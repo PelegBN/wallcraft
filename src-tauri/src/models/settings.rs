@@ -15,7 +15,7 @@ impl Default for AppSettings {
             ai_provider: "pollinations".to_string(),
             openai_api_key: None,
             save_directory: None,
-            upscale_enabled: false,
+            upscale_enabled: true,
             upscale_factor: 4,
         }
     }

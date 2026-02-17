@@ -4,15 +4,18 @@ use crate::error::AppError;
 
 pub async fn generate(
     prompt: &str,
-    width: u32,
-    height: u32,
+    target_width: u32,
+    target_height: u32,
     output_path: &PathBuf,
 ) -> Result<(), AppError> {
+    // Request at target resolution, capped at Pollinations' 2048 limit per axis
+    let gen_width = target_width.min(2048);
+    let gen_height = target_height.min(2048);
     let encoded_prompt = urlencoding::encode(prompt);
     let seed: u32 = rand::random();
     let url = format!(
-        "https://image.pollinations.ai/prompt/{}?width={}&height={}&nologo=true&seed={}&model=flux&enhance=true",
-        encoded_prompt, width, height, seed
+        "https://image.pollinations.ai/prompt/{}?width={}&height={}&nologo=true&seed={}&model=flux-pro&enhance=true",
+        encoded_prompt, gen_width, gen_height, seed
     );
 
     let client = reqwest::Client::new();
@@ -26,6 +29,20 @@ pub async fn generate(
         return Err(AppError::Generation(format!(
             "Pollinations returned status: {}",
             response.status()
+        )));
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if !content_type.starts_with("image/") {
+        return Err(AppError::Generation(format!(
+            "Pollinations returned non-image response: {}",
+            content_type
         )));
     }
 

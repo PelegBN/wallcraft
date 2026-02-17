@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use base64::Engine;
+
 use crate::error::AppError;
 
 #[tauri::command]
@@ -25,4 +27,10 @@ pub async fn delete_temp_image(image_path: String) -> Result<(), AppError> {
         tokio::fs::remove_file(&path).await?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn read_image_base64(path: String) -> Result<String, AppError> {
+    let bytes = tokio::fs::read(&path).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }

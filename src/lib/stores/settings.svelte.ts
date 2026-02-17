@@ -12,7 +12,7 @@ const defaultSettings: AppSettings = {
   ai_provider: "pollinations",
   openai_api_key: null,
   save_directory: null,
-  upscale_enabled: false,
+  upscale_enabled: true,
   upscale_factor: 4,
 };
 

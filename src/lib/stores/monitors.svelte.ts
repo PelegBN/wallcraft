@@ -21,6 +21,9 @@ let loading = $state(false);
 let error = $state<string | null>(null);
 let selectedMode = $state<"individual" | "spanning">("individual");
 let selectedMonitorIndex = $state(0);
+let useCustomResolution = $state(false);
+let customWidth = $state(1920);
+let customHeight = $state(1080);
 
 export function getMonitorStore() {
   return {
@@ -31,6 +34,12 @@ export function getMonitorStore() {
     set selectedMode(v: "individual" | "spanning") { selectedMode = v; },
     get selectedMonitorIndex() { return selectedMonitorIndex; },
     set selectedMonitorIndex(v: number) { selectedMonitorIndex = v; },
+    get useCustomResolution() { return useCustomResolution; },
+    set useCustomResolution(v: boolean) { useCustomResolution = v; },
+    get customWidth() { return customWidth; },
+    set customWidth(v: number) { customWidth = v; },
+    get customHeight() { return customHeight; },
+    set customHeight(v: number) { customHeight = v; },
 
     async detectMonitors() {
       loading = true;
@@ -44,13 +53,20 @@ export function getMonitorStore() {
       }
     },
 
-    get targetResolution(): { width: number; height: number } {
+    get monitorResolution(): { width: number; height: number } {
       if (!layout) return { width: 1920, height: 1080 };
       if (selectedMode === "spanning") {
         return { width: layout.total_width, height: layout.total_height };
       }
       const m = layout.monitors[selectedMonitorIndex];
       return m ? { width: m.width, height: m.height } : { width: 1920, height: 1080 };
+    },
+
+    get targetResolution(): { width: number; height: number } {
+      if (useCustomResolution) {
+        return { width: customWidth, height: customHeight };
+      }
+      return this.monitorResolution;
     },
   };
 }

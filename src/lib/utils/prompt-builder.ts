@@ -1,15 +1,11 @@
-import { CATEGORIES } from "./categories";
-
 export function buildPrompt(
-  selectedCategoryIds: string[],
+  styleIds: string[],
+  schemeIds: string[],
   customPrompt: string | null
-): { categories: string[]; custom_prompt: string | null } {
-  const categoryFragments = selectedCategoryIds
-    .map((id) => CATEGORIES.find((c) => c.id === id)?.promptFragment)
-    .filter((f): f is string => f !== undefined);
-
+): { styles: string[]; color_schemes: string[]; custom_prompt: string | null } {
   return {
-    categories: categoryFragments,
+    styles: styleIds,
+    color_schemes: schemeIds,
     custom_prompt: customPrompt?.trim() || null,
   };
 }

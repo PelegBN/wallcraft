@@ -8,7 +8,9 @@ pub enum AiProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationRequest {
-    pub categories: Vec<String>,
+    pub styles: Vec<String>,
+    #[serde(default)]
+    pub color_schemes: Vec<String>,
     pub custom_prompt: Option<String>,
     pub width: u32,
     pub height: u32,

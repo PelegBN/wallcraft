@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::generation::{AiProvider, GenerationRequest, GenerationResult};
 use crate::models::settings::AppSettings;
-use crate::services::{openai, pollinations};
+use crate::services::{openai, pollinations, svg_generator};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -18,13 +18,6 @@ pub async fn generate_image(
 ) -> Result<GenerationResult, AppError> {
     let _ = app.emit("generation-progress", "starting");
 
-    let prompt = build_prompt(&request.categories, request.custom_prompt.as_deref());
-
-    let (gen_width, gen_height) = match request.provider {
-        AiProvider::Pollinations => (request.width.min(2048), request.height.min(2048)),
-        AiProvider::OpenAi => (1024, 1024),
-    };
-
     let cache_dir = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("wallcraft");
@@ -35,18 +28,54 @@ pub async fn generate_image(
 
     let _ = app.emit("generation-progress", "generating");
 
-    match request.provider {
-        AiProvider::Pollinations => {
-            pollinations::generate(&prompt, gen_width, gen_height, &output_path).await?;
+    let use_svg = !request.styles.is_empty();
+
+    let (final_width, final_height) = if use_svg {
+        // Vector art mode: generate SVG → rasterize to PNG at exact target resolution
+        svg_generator::generate(
+            &request.styles,
+            &request.color_schemes,
+            request.custom_prompt.as_deref(),
+            request.target_width,
+            request.target_height,
+            &output_path,
+        )?;
+        (request.target_width, request.target_height)
+    } else {
+        // Direct prompt mode: use AI image generation API
+        let prompt = build_prompt(request.custom_prompt.as_deref());
+
+        let (gen_width, gen_height) = match request.provider {
+            AiProvider::Pollinations => {
+                pollinations::generate(
+                    &prompt,
+                    request.target_width,
+                    request.target_height,
+                    &output_path,
+                )
+                .await?;
+                read_image_dimensions(&output_path)?
+            }
+            AiProvider::OpenAi => {
+                let api_key = settings
+                    .openai_api_key
+                    .as_deref()
+                    .ok_or_else(|| {
+                        AppError::Generation("OpenAI API key not configured".into())
+                    })?;
+                openai::generate(&prompt, api_key, 1024, 1024, &output_path).await?;
+                (1024, 1024)
+            }
+        };
+
+        // Resize if the API returned smaller than target
+        if gen_width < request.target_width || gen_height < request.target_height {
+            resize_image(&output_path, request.target_width, request.target_height)?;
+            (request.target_width, request.target_height)
+        } else {
+            (gen_width, gen_height)
         }
-        AiProvider::OpenAi => {
-            let api_key = settings
-                .openai_api_key
-                .as_deref()
-                .ok_or_else(|| AppError::Generation("OpenAI API key not configured".into()))?;
-            openai::generate(&prompt, api_key, gen_width, gen_height, &output_path).await?;
-        }
-    }
+    };
 
     let _ = app.emit("generation-progress", "complete");
 
@@ -54,35 +83,50 @@ pub async fn generate_image(
 
     Ok(GenerationResult {
         image_path: output_path.to_string_lossy().to_string(),
-        original_width: gen_width,
-        original_height: gen_height,
-        final_width: gen_width,
-        final_height: gen_height,
+        original_width: final_width,
+        original_height: final_height,
+        final_width,
+        final_height,
         was_upscaled: false,
     })
 }
 
-fn build_prompt(categories: &[String], custom: Option<&str>) -> String {
-    let mut parts: Vec<String> = Vec::new();
+fn read_image_dimensions(path: &PathBuf) -> Result<(u32, u32), AppError> {
+    let reader = image::ImageReader::open(path)
+        .map_err(|e| AppError::Generation(format!("Failed to open generated image: {}", e)))?
+        .with_guessed_format()
+        .map_err(|e| AppError::Generation(format!("Failed to guess image format: {}", e)))?;
+    let img = reader
+        .decode()
+        .map_err(|e| AppError::Generation(format!("Failed to decode generated image: {}", e)))?;
+    Ok((img.width(), img.height()))
+}
 
-    if !categories.is_empty() {
-        parts.push(format!(
-            "A stunning desktop wallpaper featuring: {}",
-            categories.join(", ")
-        ));
-    }
+fn resize_image(path: &PathBuf, target_width: u32, target_height: u32) -> Result<(), AppError> {
+    let reader = image::ImageReader::open(path)
+        .map_err(|e| AppError::Generation(format!("Failed to open image for resize: {}", e)))?
+        .with_guessed_format()
+        .map_err(|e| AppError::Generation(format!("Failed to guess format for resize: {}", e)))?;
+    let img = reader
+        .decode()
+        .map_err(|e| AppError::Generation(format!("Failed to decode image for resize: {}", e)))?;
+    let resized =
+        img.resize_exact(target_width, target_height, image::imageops::FilterType::Lanczos3);
+    resized
+        .save(path)
+        .map_err(|e| AppError::Generation(format!("Failed to save resized image: {}", e)))?;
+    Ok(())
+}
 
-    if let Some(custom_text) = custom {
-        if !custom_text.trim().is_empty() {
-            parts.push(custom_text.to_string());
+/// Build prompt for direct prompt mode (AI generation, not vector art)
+fn build_prompt(custom: Option<&str>) -> String {
+    let quality_suffix = "masterpiece, best quality, ultra-detailed, sharp focus, \
+        desktop wallpaper, no text, no watermark, no logo, no signature";
+
+    match custom {
+        Some(text) if !text.trim().is_empty() => {
+            format!("{}, {}", text.trim(), quality_suffix)
         }
-    }
-
-    let quality_suffix = "ultra high resolution, photorealistic, sharp details, professional quality, 8K UHD desktop wallpaper, wide aspect ratio, vibrant colors, stunning composition";
-
-    if parts.is_empty() {
-        format!("A beautiful abstract desktop wallpaper, {}", quality_suffix)
-    } else {
-        format!("{}, {}", parts.join(". "), quality_suffix)
+        _ => format!("A beautiful abstract desktop wallpaper, {}", quality_suffix),
     }
 }
